@@ -1,0 +1,56 @@
+name: agrisense
+
+include:
+  - path: ./supabase/docker-compose.yml
+    env_file:
+      - .env
+
+services:
+  api:
+    build:
+      context: ../agrisense-backend
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-3143}:${PORT:-3143}"
+    environment:
+      - DATABASE_URL=postgresql://supabase_admin.${POOLER_TENANT_ID}:${POSTGRES_PASSWORD}@supavisor:5432/${POSTGRES_DB}
+      - DIRECT_URL=postgresql://supabase_admin:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      - PORT=${PORT:-3143}
+      - SEED=${SEED:-true}
+      - MQTT_HOST=${MQTT_HOST:-mosquitto}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - MQTT_USERNAME=${MQTT_USERNAME:-}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-}
+    depends_on:
+      supavisor:
+        condition: service_started
+      db:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ../agrisense-frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:${PORT:-3143}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - api
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    restart: unless-stopped
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:

@@ -1,0 +1,14 @@
+# Environment (secrets)
+.env
+!.env.example
+
+# Docker volumes data
+volumes/
+supabase/volumes/db/data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
