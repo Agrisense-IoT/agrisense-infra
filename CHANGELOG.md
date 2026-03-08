@@ -23,6 +23,7 @@ All notable changes to the Agrisense single-repo orchestrator and TUI will be do
 - **Variable Parsing Issues:** Cleaned up `.env` extraction and fixed credential propagation errors inside `config.ps1`.
 - **Navigation Bounds:** Implemented cyclic wrap-around navigation in both the root dashboard and the `.env` editor.
 - **Layout Padding:** Fixed string padding logic offset when using double-width emoji icons (e.g. ⚡).
+- Corrected license information (GPL-3.0)
 
 ## [1.0.0] - 2026-03-07
 
