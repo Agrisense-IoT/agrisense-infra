@@ -2,6 +2,12 @@
 
 All notable changes to the Agrisense single-repo orchestrator and TUI will be documented in this file.
 
+## [1.1.2] - 2026-03-08
+
+### ⚙️ Sync & Build
+
+- Version synchronization for OTA and Telemetry maintenance update.
+
 ## [1.1.1] - 2026-03-08
 
 ### ⚙️ Sync & Build
