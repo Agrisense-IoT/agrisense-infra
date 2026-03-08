@@ -1,56 +1,80 @@
+# Agrisense — root orchestration compose file
+#
+# Manages three service groups:
+#   - supabase    (included from ./supabase/docker-compose.yml)
+#   - backend     (agrisense-backend, built from ../agrisense-backend)
+#   - frontend    (agrisense-frontend, built from ../agrisense-frontend)
+#
+# All configuration is sourced from a single .env file in this directory.
+# Do not define env values directly in this file — use .env.
+#
+# Start with:  ./agrisense.ps1
+# Or directly: docker compose --env-file .env up
+
 name: agrisense
 
 include:
   - path: ./supabase/docker-compose.yml
-    env_file:
-      - .env
+    env_file: .env
 
 services:
-  api:
+  backend:
+    container_name: agrisense-backend
     build:
       context: ../agrisense-backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
-      - "${PORT:-3143}:${PORT:-3143}"
+      - "${PORT}:3143"
+    env_file: .env
     environment:
-      - DATABASE_URL=postgresql://supabase_admin.${POOLER_TENANT_ID}:${POSTGRES_PASSWORD}@supavisor:5432/${POSTGRES_DB}
-      - DIRECT_URL=postgresql://supabase_admin:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
-      - PORT=${PORT:-3143}
-      - SEED=${SEED:-true}
-      - MQTT_HOST=${MQTT_HOST:-mosquitto}
-      - MQTT_PORT=${MQTT_PORT:-1883}
-      - MQTT_USERNAME=${MQTT_USERNAME:-}
-      - MQTT_PASSWORD=${MQTT_PASSWORD:-}
+      PORT: 3143
+      # DATABASE_URL: pooled connection for the app (runtime queries).
+      # DIRECT_URL: direct connection used by prisma migrate deploy in the CMD.
+      # Both use container-internal hostnames (supabase-pooler / supabase-db).
+      DATABASE_URL: "postgresql://postgres.${POOLER_TENANT_ID}:${POSTGRES_PASSWORD}@supabase-pooler:6543/${POSTGRES_DB}?pgbouncer=true"
+      DIRECT_URL: "postgresql://supabase_admin:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT}/${POSTGRES_DB}"
+      SEED: ${SEED}
+      MQTT_HOST: ${MQTT_HOST}
+      MQTT_PORT: ${MQTT_PORT}
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+    # Run migrations automatically on startup using the backend Dockerfile's CMD
     depends_on:
       supavisor:
-        condition: service_started
-      db:
         condition: service_healthy
-      mosquitto:
-        condition: service_started
+    healthcheck:
+      # Test the Swagger UI which is always present in NestJS
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3143/api",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   frontend:
+    container_name: agrisense-frontend
     build:
       context: ../agrisense-frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:${PORT:-3143}
-    ports:
-      - "${FRONTEND_PORT:-3000}:3000"
-    depends_on:
-      - api
-
-  mosquitto:
-    image: eclipse-mosquitto:2
-    ports:
-      - "1883:1883"
-      - "9001:9001"
-    volumes:
-      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - mosquitto_data:/mosquitto/data
-      - mosquitto_log:/mosquitto/log
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3143}
     restart: unless-stopped
-
-volumes:
-  mosquitto_data:
-  mosquitto_log:
+    ports:
+      - "${FRONTEND_PORT}:3000"
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      # Next.js standalone server reads PORT from env; override to 3000 so it
+      # matches the container's exposed port, regardless of .env PORT value.
+      PORT: "3000"
+    depends_on:
+      backend:
+        condition: service_started

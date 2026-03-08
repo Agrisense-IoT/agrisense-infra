@@ -1,0 +1,70 @@
+
+> agrisense-backend@1.1.0 start:dev
+> nest start --watch
+
+[2J[3J[H[[90m9:47:11 AM[0m] Starting compilation in watch mode...
+
+[[90m9:47:14 AM[0m] Found 0 errors. Watching for file changes.
+
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[NestFactory] [39m[32mStarting Nest application...[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mPrismaModule dependencies initialized[39m[38;5;3m +9ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAppModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMqttModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mUsersModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mFieldsModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mCropsModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mDevicesModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mReportsModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mHarvestsModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mReadingsModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAppController {/}:[39m[38;5;3m +4ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/, GET} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/monitor, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/monitor, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/monitor/index.html, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/testing.html, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/testing, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/testing, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mUsersController {/users}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/users, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/users, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/users/:id, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/users/:id, PATCH} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/users/:id, DELETE} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mFieldsController {/fields}:[39m[38;5;3m +32ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/fields, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/fields, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/fields/:id, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/fields/:id, PATCH} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/fields/:id, DELETE} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mCropsController {/crops}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/crops, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/crops, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/crops/:id, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/crops/:id, PATCH} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/crops/:id, DELETE} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mDevicesController {/devices}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/devices, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/devices, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/devices/:mac, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/devices/:mac, PATCH} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/devices/:mac, DELETE} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mReportsController {/reports}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/reports, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/reports, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/reports/:id, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/reports/:id, PATCH} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/reports/:id, DELETE} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mHarvestsController {/harvests}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/harvests, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/harvests, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/harvests/:id, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/harvests/:id, PATCH} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/harvests/:id, DELETE} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mReadingsController {/readings}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/readings, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/readings/:id, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/readings/:id, DELETE} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[PrismaService] [39m[32mDatabase connection established[39m
+[33m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [33m   WARN[39m [38;5;3m[MqttService] [39m[33mMQTT_HOST is not set — MQTT integration disabled. Set MQTT_HOST to enable it.[39m
+[32m[Nest] 42600  - [39m03/08/2026, 9:47:15 AM [32m    LOG[39m [38;5;3m[NestApplication] [39m[32mNest application successfully started[39m[38;5;3m +2ms[39m

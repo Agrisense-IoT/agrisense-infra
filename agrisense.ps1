@@ -22,7 +22,9 @@ param(
     [switch]$RemoveVolumes,
     [switch]$RemoveBuilds,
     [switch]$Status,
-    [switch]$Help
+    [switch]$Help,
+    [switch]$StartProject,
+    [switch]$Development
 )
 
 Set-StrictMode -Version Latest
@@ -36,7 +38,15 @@ $script:ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $script:EnvFile = Join-Path $script:ScriptDir '.env'
 $script:EnvExampleFile = Join-Path $script:ScriptDir '.env.example'
 $script:ComposeFile = Join-Path $script:ScriptDir 'docker-compose.yml'
+$script:DevComposeFile = Join-Path $script:ScriptDir 'docker-compose.dev.yml'
 $script:ConfigScript = Join-Path $script:ScriptDir 'config.ps1'
+
+# Development mode — set from the -Development flag; also honoured via DEV_MODE=true in .env
+$script:Development = $Development.IsPresent
+if (-not $script:Development -and (Test-Path (Join-Path $script:ScriptDir '.env'))) {
+    $devLine = Select-String -Path (Join-Path $script:ScriptDir '.env') -Pattern '^DEV_MODE\s*=\s*true\s*$' -Quiet
+    if ($devLine) { $script:Development = $true }
+}
 
 # State
 $script:SelectedIndex = 0
@@ -44,7 +54,7 @@ $script:Containers = @()
 $script:LastRefresh = [datetime]::MinValue
 $script:RefreshIntervalMs = 2000
 $script:Running = $true
-$script:CurrentView = 'dashboard'  # dashboard | logs | env | confirm
+$script:CurrentView = 'dashboard'  # dashboard | logs | env | popup-menu | action
 $script:ScreenDirty = $true        # Dirty flag — only redraw when true
 $script:LastWidth = 0
 $script:LastHeight = 0
@@ -56,6 +66,20 @@ $script:LogMaxLines = 5000
 $script:LogScrollOffset = 0
 $script:LogAutoTail = $true
 $script:LogContainerName = ''
+
+# Action view state
+$script:ActionProcess = $null
+$script:ActionBuffer = [System.Collections.Generic.List[string]]::new()
+$script:ActionMaxLines = 5000
+$script:ActionScrollOffset = 0
+$script:ActionAutoTail = $true
+$script:ActionCommandLabel = ''
+$script:ActionComplete = $false
+$script:ActionExitCode = 0
+$script:ActionQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+$script:ActionDeferredCleanup = $null
+$script:ActionSpinnerFrame = 0
+$script:ActionSpinnerChars = @('|', '/', '-', '\')
 
 # Env editor state
 $script:EnvSections = @()
@@ -69,9 +93,12 @@ $script:EnvFieldsCache = @()         # Cached flat field list
 $script:EnvDisplayCache = $null      # Cached display items list
 $script:EnvFieldsCacheDirty = $true  # Invalidate on env data change
 
-# Confirm dialog state
-$script:ConfirmMessage = ''
-$script:ConfirmAction = $null
+# Popup menu state
+$script:PopupTitle = ''
+$script:PopupOptions = @()
+$script:PopupSelectedIndex = 0
+$script:PopupPreviousView = 'dashboard'
+$script:PopupRowLayout = @()   # array of row start indices into PopupOptions
 
 # Saved console state
 $script:OrigCursorVisible = $true
@@ -149,6 +176,15 @@ function Buf-FullLine {
     [void]$script:FrameBuffer.Append("`e[$($Y+1);1H$fgCode$bgCode$padded`e[0m")
 }
 
+# Append colored text at X,Y without clearing the line
+function Buf-At-Raw {
+    param([int]$X, [int]$Y, [string]$Text, [string]$Fg = 'White', [string]$Bg = '')
+    if ($Y -lt 0 -or $Y -ge $script:FH) { return }
+    $fgCode = $script:AnsiFg[$Fg]
+    $bgCode = if ($Bg) { $script:AnsiBg[$Bg] } else { '' }
+    [void]$script:FrameBuffer.Append("`e[$($Y+1);$($X+1)H$fgCode$bgCode$Text`e[0m")
+}
+
 # Clear a line (fill with spaces)
 function Buf-ClearLine {
     param([int]$Y)
@@ -201,7 +237,11 @@ function Write-FullLine {
 # ---------------------------------------------------------------------------
 
 function Get-ComposeArgs {
-    return @('--env-file', $script:EnvFile, '--project-directory', $script:ScriptDir)
+    $args_ = @('--env-file', $script:EnvFile, '--project-directory', $script:ScriptDir)
+    if ($script:Development) {
+        $args_ += @('-f', $script:ComposeFile, '-f', $script:DevComposeFile)
+    }
+    return $args_
 }
 
 function Get-ProjectContainers {
@@ -247,58 +287,254 @@ function Invoke-DockerAction {
     param(
         [string]$Action,
         [switch]$WithVolumes,
-        [switch]$WithBuilds
+        [switch]$WithBuilds,
+        [string]$ServiceName
     )
     $args_ = Get-ComposeArgs
     switch ($Action) {
-        'start' { $args_ += @('up', '-d') }
-        'stop' { $args_ += 'stop' }
-        'restart' { $args_ += 'restart' }
-        'build' { $args_ += @('up', '-d', '--build') }
+        'start' {
+            if ($ServiceName) { $args_ += @('up', '-d', '--no-deps', $ServiceName) }
+            else { $args_ += @('up', '-d') }
+        }
+        'stop' {
+            $args_ += 'stop'
+            if ($ServiceName) { $args_ += $ServiceName }
+        }
+        'restart' {
+            $args_ += 'restart'
+            if ($ServiceName) { $args_ += $ServiceName }
+        }
+        'build' {
+            if ($ServiceName) { $args_ += @('up', '-d', '--build', '--no-deps', $ServiceName) }
+            else { $args_ += @('up', '-d', '--build') }
+        }
         'destroy' {
             $args_ += @('down', '--remove-orphans')
-            if ($WithVolumes) {
-                $args_ += '-v'
-                # Supabase uses bind mounts for persistence that aren't removed by `down -v`
-                $dbPath = Join-Path $script:ScriptDir 'supabase\volumes\db\data'
-                $storagePath = Join-Path $script:ScriptDir 'supabase\volumes\storage'
-                if (Test-Path $dbPath) { Get-ChildItem -Path $dbPath | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
-                if (Test-Path $storagePath) { Get-ChildItem -Path $storagePath | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
-            }
+            if ($WithVolumes) { $args_ += '-v' }
             if ($WithBuilds) { $args_ += '--rmi', 'all' }
         }
     }
 
-    # Run in foreground, capturing output
-    $script:CurrentView = 'action'
-    [Console]::Clear()
-    [Console]::SetCursorPosition(0, 0)
-    [Console]::CursorVisible = $true
-    $header = " AgriSense > docker compose $($args_[4..$($args_.Count-1)] -join ' ') "
-    Write-Host $header -ForegroundColor Black -BackgroundColor DarkCyan
-    Write-Host ''
+    # Build command label for display (skip the --env-file / --project-directory preamble)
+    $displayArgs = $args_[4..($args_.Count - 1)]
+    $script:ActionCommandLabel = "docker compose $($displayArgs -join ' ')"
 
-    try {
-        $procArgs = @('compose') + $args_
-        $proc = Start-Process -FilePath "docker" -ArgumentList $procArgs -NoNewWindow -Wait -PassThru
-        if ($proc.ExitCode -ne 0) {
-            Write-Host "  Command exited with code $($proc.ExitCode)" -ForegroundColor Red
+    # Deferred cleanup for destroy (bind-mount paths that -v doesn't remove)
+    $script:ActionDeferredCleanup = $null
+    if ($Action -eq 'destroy' -and $WithVolumes) {
+        $dbPath = Join-Path $script:ScriptDir 'supabase\volumes\db\data'
+        $storagePath = Join-Path $script:ScriptDir 'supabase\volumes\storage'
+        $script:ActionDeferredCleanup = {
+            if (Test-Path $dbPath) { Get-ChildItem -Path $dbPath      | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $storagePath) { Get-ChildItem -Path $storagePath | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
-    catch {
-        Write-Host "  Error: $_" -ForegroundColor Red
-    }
-    finally {
-        [Console]::CursorVisible = $false
-    }
 
-    Write-Host ''
-    Write-Host '  Press any key to return to the dashboard...' -ForegroundColor DarkGray
-    [Console]::ReadKey($true) | Out-Null
+    # Reset action view state
+    $script:ActionBuffer.Clear()
+    $script:ActionScrollOffset = 0
+    $script:ActionAutoTail = $true
+    $script:ActionComplete = $false
+    $script:ActionExitCode = 0
+    $script:ActionSpinnerFrame = 0
+    while ($script:ActionQueue.TryDequeue([ref]$null)) {}
 
+    # Launch docker compose as a background process with piped output
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'docker'
+    $psi.Arguments = "compose $($args_ -join ' ')"
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+
+    $script:ActionProcess = [System.Diagnostics.Process]::new()
+    $script:ActionProcess.StartInfo = $psi
+    $script:ActionProcess.EnableRaisingEvents = $true
+
+    $q = $script:ActionQueue
+    Register-ObjectEvent -InputObject $script:ActionProcess -EventName 'OutputDataReceived' -Action {
+        if ($null -ne $EventArgs.Data) { $Event.MessageData.Enqueue($EventArgs.Data) }
+    } -MessageData $q -SourceIdentifier 'ActionStdout' | Out-Null
+
+    Register-ObjectEvent -InputObject $script:ActionProcess -EventName 'ErrorDataReceived' -Action {
+        if ($null -ne $EventArgs.Data) { $Event.MessageData.Enqueue($EventArgs.Data) }
+    } -MessageData $q -SourceIdentifier 'ActionStderr' | Out-Null
+
+    $script:ActionProcess.Start()          | Out-Null
+    $script:ActionProcess.BeginOutputReadLine()
+    $script:ActionProcess.BeginErrorReadLine()
+
+    $script:CurrentView = 'action'
+    $script:ScreenDirty = $true
+    [Console]::Clear()
+}
+
+function Stop-ActionView {
+    try { Unregister-Event -SourceIdentifier 'ActionStdout' -ErrorAction SilentlyContinue } catch {}
+    try { Unregister-Event -SourceIdentifier 'ActionStderr' -ErrorAction SilentlyContinue } catch {}
+    try { Get-Job -Name 'ActionStdout' -ErrorAction SilentlyContinue | Remove-Job -Force } catch {}
+    try { Get-Job -Name 'ActionStderr' -ErrorAction SilentlyContinue | Remove-Job -Force } catch {}
+
+    if ($script:ActionProcess -and -not $script:ActionProcess.HasExited) {
+        try { $script:ActionProcess.Kill() } catch {}
+    }
+    if ($script:ActionProcess) {
+        try { $script:ActionProcess.Dispose() } catch {}
+    }
+    $script:ActionProcess = $null
     $script:CurrentView = 'dashboard'
     $script:LastRefresh = [datetime]::MinValue
     $script:ScreenDirty = $true
+    [Console]::Clear()
+}
+
+function Update-ActionBuffer {
+    if (-not $script:ActionProcess) { return }
+
+    $lineText = $null
+    $count = 0
+    while ($script:ActionQueue.TryDequeue([ref]$lineText) -and $count -lt 200) {
+        $script:ActionBuffer.Add($lineText)
+        if ($script:ActionBuffer.Count -gt $script:ActionMaxLines) {
+            $script:ActionBuffer.RemoveAt(0)
+        }
+        $count++
+    }
+
+    if ($script:ActionProcess.HasExited -and -not $script:ActionComplete) {
+        # Drain remaining output
+        $lineText = $null
+        while ($script:ActionQueue.TryDequeue([ref]$lineText)) {
+            $script:ActionBuffer.Add($lineText)
+        }
+
+        $script:ActionExitCode = $script:ActionProcess.ExitCode
+        if ($script:ActionExitCode -ne 0) {
+            $script:ActionBuffer.Add('')
+            $script:ActionBuffer.Add("  [!] Command exited with code $($script:ActionExitCode)")
+        }
+        else {
+            $script:ActionBuffer.Add('')
+            $script:ActionBuffer.Add('  [OK] Done.')
+        }
+
+        # Run deferred cleanup (destroy -WithVolumes)
+        if ($null -ne $script:ActionDeferredCleanup) {
+            try { & $script:ActionDeferredCleanup } catch {}
+            $script:ActionDeferredCleanup = $null
+        }
+
+        $script:ActionComplete = $true
+    }
+}
+
+function Draw-ActionView {
+    $w = $script:FW
+    $h = $script:FH
+
+    # Header
+    if ($script:ActionComplete) {
+        $statusText = if ($script:ActionExitCode -eq 0) { ' [Done] ' } else { " [Exit $($script:ActionExitCode)] " }
+        $statusFg = if ($script:ActionExitCode -eq 0) { 'Green' } else { 'Red' }
+    }
+    else {
+        $spinChar = $script:ActionSpinnerChars[$script:ActionSpinnerFrame % 4]
+        $script:ActionSpinnerFrame++
+        $statusText = " $spinChar Running "
+        $statusFg = 'Yellow'
+    }
+
+    $header = " AgriSense > $($script:ActionCommandLabel)"
+    $gap = $w - $header.Length - $statusText.Length
+    if ($gap -lt 1) { $gap = 1 }
+    $headerLine = $header + (' ' * $gap) + $statusText
+    Buf-FullLine 0 $headerLine 'White' 'DarkCyan'
+
+    # Output area (row 1 to h-3)
+    $areaStart = 1
+    $areaEnd = $h - 2
+    $areaH = [Math]::Max(0, $areaEnd - $areaStart)
+
+    if ($script:ActionAutoTail) {
+        $script:ActionScrollOffset = [Math]::Max(0, $script:ActionBuffer.Count - $areaH)
+    }
+
+    if ($script:ActionBuffer.Count -eq 0) {
+        Buf-FullLine ([int]($h / 2)) '  Waiting for output...' 'DarkGray'
+    }
+
+    for ($i = 0; $i -lt $areaH; $i++) {
+        $lineIdx = $script:ActionScrollOffset + $i
+        $row = $areaStart + $i
+        if ($lineIdx -lt $script:ActionBuffer.Count) {
+            $lineText = $script:ActionBuffer[$lineIdx]
+            if ($lineText.Length -gt $w) { $lineText = $lineText.Substring(0, $w) }
+            $fg = if ($lineText -match '^\s*\[!\]') { 'Red' } elseif ($lineText -match '^\s*\[OK\]') { 'Green' } else { 'Gray' }
+            Buf-FullLine $row $lineText $fg
+        }
+        else {
+            Buf-ClearLine $row
+        }
+    }
+
+    # Bottom bar
+    $footerBg = 'DarkGray'
+    Buf-FullLine ($h - 1) '' 'White' $footerBg
+    $curX = 2
+
+    if ($script:ActionComplete) {
+        $nav = @(
+            @{ K = 'Esc'; L = 'Return to Dashboard'; C = 'Yellow' }
+            @{ K = "$([char]0x2191)$([char]0x2193)"; L = 'Scroll'; C = 'Gray' }
+        )
+        foreach ($n in $nav) {
+            Buf-At-Raw $curX ($h - 1) '[' 'Gray' $footerBg
+            Buf-At-Raw ($curX + 1) ($h - 1) $n.K $n.C $footerBg
+            Buf-At-Raw ($curX + 1 + $n.K.Length) ($h - 1) "] $($n.L)  " 'White' $footerBg
+            $curX += $n.L.Length + $n.K.Length + 5
+        }
+    }
+    else {
+        Buf-At-Raw $curX ($h - 1) '  Running... please wait' 'Yellow' $footerBg
+        $curX = $w - 20
+        Buf-At-Raw $curX ($h - 1) '[' 'Gray' $footerBg
+        Buf-At-Raw ($curX + 1) ($h - 1) "$([char]0x2191)$([char]0x2193)" 'Gray' $footerBg
+        Buf-At-Raw ($curX + 3) ($h - 1) '] Scroll' 'White' $footerBg
+    }
+}
+
+function Handle-ActionInput {
+    param([System.ConsoleKeyInfo]$Key)
+    $areaH = $script:FH - 3
+
+    switch ($Key.Key) {
+        'Escape' {
+            if ($script:ActionComplete) { Stop-ActionView }
+        }
+        'UpArrow' {
+            $script:ActionAutoTail = $false
+            $script:ActionScrollOffset = [Math]::Max(0, $script:ActionScrollOffset - 1)
+        }
+        'DownArrow' {
+            $script:ActionAutoTail = $false
+            $maxOff = [Math]::Max(0, $script:ActionBuffer.Count - $areaH)
+            $script:ActionScrollOffset = [Math]::Min($maxOff, $script:ActionScrollOffset + 1)
+            if ($script:ActionScrollOffset -ge $maxOff) { $script:ActionAutoTail = $true }
+        }
+        'PageUp' {
+            $script:ActionAutoTail = $false
+            $script:ActionScrollOffset = [Math]::Max(0, $script:ActionScrollOffset - $areaH)
+        }
+        'PageDown' {
+            $script:ActionAutoTail = $false
+            $maxOff = [Math]::Max(0, $script:ActionBuffer.Count - $areaH)
+            $script:ActionScrollOffset = [Math]::Min($maxOff, $script:ActionScrollOffset + $areaH)
+            if ($script:ActionScrollOffset -ge $maxOff) { $script:ActionAutoTail = $true }
+        }
+        'Home' { $script:ActionAutoTail = $false; $script:ActionScrollOffset = 0 }
+        'End' { $script:ActionAutoTail = $true }
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -310,7 +546,8 @@ function Draw-Dashboard {
     $h = $script:FH
 
     # Header (row 0-2)
-    $title = " AgriSense Dashboard"
+    $devTag = if ($script:Development) { ' [DEV]' } else { '' }
+    $title = " AgriSense Dashboard$devTag"
     $countRunning = 0
     foreach ($c in $script:Containers) { if ($c.State -eq 'running') { $countRunning++ } }
     $countTotal = $script:Containers.Count
@@ -369,10 +606,62 @@ function Draw-Dashboard {
     Buf-FullLine ($h - 3) (' ' + (([char]0x2500).ToString() * ($w - 2)) + ' ') 'DarkGray'
 
     # Action bar (row h-2, h-1)
-    $bar1 = '  [S] Start  [X] Stop  [R] Restart  [B] Re-Build  [D] Stop & Destroy'
-    $bar2 = '  [E] Edit .env  [Q] Quit  [Enter] View Logs  [' + $([char]0x2191) + $([char]0x2193) + '] Navigate'
-    Buf-FullLine ($h - 2) $bar1 'White' 'DarkGray'
-    Buf-FullLine ($h - 1) $bar2 'White' 'DarkGray'
+    $footerBg = 'DarkGray'
+    Buf-FullLine ($h - 2) '' 'White' $footerBg
+    Buf-FullLine ($h - 1) '' 'White' $footerBg
+
+    # Row 1: Service Lifecycle (Fixed Grid)
+    $pipeX = 52
+    $colWidth = 16
+    $actions = @(
+        @{ K = 'S'; L = 'Start'; C = 'Green' }
+        @{ K = 'R'; L = 'Restart'; C = 'Yellow' }
+        @{ K = 'B'; L = 'Re-Build'; C = 'Cyan' }
+    )
+    for ($i = 0; $i -lt $actions.Count; $i++) {
+        $a = $actions[$i]
+        $x = 2 + ($i * $colWidth)
+        Buf-At-Raw $x ($h - 2) '[' 'Gray' $footerBg
+        Buf-At-Raw ($x + 1) ($h - 2) $a.K $a.C $footerBg
+        Buf-At-Raw ($x + 1 + $a.K.Length) ($h - 2) "] $($a.L)" 'White' $footerBg
+    }
+    Buf-At-Raw $pipeX ($h - 2) '|' 'DarkGray' $footerBg
+    $actionsRight = @(
+        @{ K = 'X'; L = 'Stop'; C = 'Red' }
+        @{ K = 'D'; L = 'Destroy'; C = 'DarkRed' }
+    )
+    for ($i = 0; $i -lt $actionsRight.Count; $i++) {
+        $a = $actionsRight[$i]
+        $x = $pipeX + 4 + ($i * $colWidth)
+        Buf-At-Raw $x ($h - 2) '[' 'Gray' $footerBg
+        Buf-At-Raw ($x + 1) ($h - 2) $a.K $a.C $footerBg
+        Buf-At-Raw ($x + 1 + $a.K.Length) ($h - 2) "] $($a.L)" 'White' $footerBg
+    }
+
+    # Row 2: Navigation & Global (Fixed Grid)
+    $nav = @(
+        @{ K = 'Enter'; L = 'Menu'; C = 'White' }
+        @{ K = "$([char]0x2191)$([char]0x2193)"; L = 'Nav'; C = 'Gray' }
+    )
+    for ($i = 0; $i -lt $nav.Count; $i++) {
+        $n = $nav[$i]
+        $x = 2 + ($i * $colWidth)
+        Buf-At-Raw $x ($h - 1) '[' 'Gray' $footerBg
+        Buf-At-Raw ($x + 1) ($h - 1) $n.K $n.C $footerBg
+        Buf-At-Raw ($x + 1 + $n.K.Length) ($h - 1) "] $($n.L)" 'White' $footerBg
+    }
+    Buf-At-Raw $pipeX ($h - 1) '|' 'DarkGray' $footerBg
+    $navRight = @(
+        @{ K = 'E'; L = 'Edit .env'; C = 'Cyan' }
+        @{ K = 'Q'; L = 'Quit'; C = 'Red' }
+    )
+    for ($i = 0; $i -lt $navRight.Count; $i++) {
+        $n = $navRight[$i]
+        $x = $pipeX + 4 + ($i * $colWidth)
+        Buf-At-Raw $x ($h - 1) '[' 'Gray' $footerBg
+        Buf-At-Raw ($x + 1) ($h - 1) $n.K $n.C $footerBg
+        Buf-At-Raw ($x + 1 + $n.K.Length) ($h - 1) "] $($n.L)" 'White' $footerBg
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -502,9 +791,24 @@ function Draw-LogViewer {
     }
 
     # Bottom bar
-    $bar = '  [Esc] Back to Dashboard  [' + $([char]0x2191) + $([char]0x2193) + '] Scroll  [PgUp/PgDn] Page  [Home] Top  [End] Bottom (auto-tail)'
-    Buf-FullLine ($h - 2) (' ' + (([char]0x2500).ToString() * ($w - 2)) + ' ') 'DarkGray'
-    Buf-FullLine ($h - 1) $bar 'White' 'DarkGray'
+    $footerBg = 'DarkGray'
+    Buf-FullLine ($h - 2) ((' ' + (([char]0x2500).ToString() * ($w - 2)) + ' ')) 'DarkGray'
+    Buf-FullLine ($h - 1) '' 'White' $footerBg
+
+    $curX = 2
+    $nav = @(
+        @{ K = 'Esc'; L = 'Dashboard'; C = 'Yellow' }
+        @{ K = "$([char]0x2191)$([char]0x2193)"; L = 'Scroll'; C = 'Gray' }
+        @{ K = 'PgUp'; L = 'Page'; C = 'Gray' }
+        @{ K = 'Home'; L = 'Top'; C = 'Gray' }
+        @{ K = 'End'; L = 'Bottom'; C = 'Cyan' }
+    )
+    foreach ($n in $nav) {
+        Buf-At-Raw $curX ($h - 1) '[' 'Gray' $footerBg
+        Buf-At-Raw ($curX + 1) ($h - 1) $n.K $n.C $footerBg
+        Buf-At-Raw ($curX + 1 + $n.K.Length) ($h - 1) "] $($n.L)  " 'White' $footerBg
+        $curX += $n.L.Length + $n.K.Length + 5
+    }
 }
 
 function Handle-LogInput {
@@ -871,10 +1175,10 @@ function Draw-EnvEditor {
                     $isGen = ($field.Key -in $script:GeneratableFields)
                     $genIcon = if ($isGen) { "$([char]0x26A1)" } else { ' ' }
                     $marker = if ($isSelected) { " $([char]0x25B8)$genIcon" } else { "  $genIcon" }
-                    
+
                     # ⚡ occupies 2 visual cells but 1 string char length. Adjust target width.
                     $targetKeyW = if ($isGen) { $keyW - 1 } else { $keyW }
-                    
+
                     $keyStr = "$marker$($field.Label)".PadRight($targetKeyW).Substring(0, $targetKeyW)
 
                     if ($script:EnvEditing -and $isSelected) {
@@ -928,16 +1232,64 @@ function Draw-EnvEditor {
     Buf-FullLine ($h - 3) (' ' + (([char]0x2500).ToString() * ($w - 2)) + ' ') 'DarkGray'
 
     # Bottom bar
+    $footerBg = 'DarkGray'
     if ($script:EnvEditing) {
-        $bar1 = '  [Enter] Confirm Edit  [Esc] Cancel Edit'
-        $bar2 = ''
+        Buf-FullLine ($h - 2) '' 'White' $footerBg
+        Buf-FullLine ($h - 1) '' 'White' $footerBg
+        
+        $curX = 2
+        Buf-At-Raw $curX ($h - 2) '[' 'Gray' $footerBg
+        Buf-At-Raw ($curX + 1) ($h - 2) 'Enter' 'Green' $footerBg
+        Buf-At-Raw ($curX + 6) ($h - 2) '] Confirm Edit' 'White' $footerBg
+
+        $curX = 2
+        Buf-At-Raw $curX ($h - 1) '[' 'Gray' $footerBg
+        Buf-At-Raw ($curX + 1) ($h - 1) 'Esc' 'Red' $footerBg
+        Buf-At-Raw ($curX + 4) ($h - 1) '] Cancel Edit' 'White' $footerBg
     }
     else {
-        $bar1 = '  [Esc] Discard & Return  [Ctrl+S] Save  [Ctrl+R] Save & Restart'
-        $bar2 = '  [Ctrl+B] Save & Re-Build  [Enter] Edit  [G] Generate  [' + $([char]0x2191) + $([char]0x2193) + '] Navigate'
+        Buf-FullLine ($h - 2) '' 'White' $footerBg
+        Buf-FullLine ($h - 1) '' 'White' $footerBg
+
+        # Row 1: Global Save Actions (Fixed Grid)
+        $pipeX = 66
+        $colWidth = 20
+        $actions = @(
+            @{ K = 'Ctrl+S'; L = 'Save'; C = 'Green' }
+            @{ K = 'Ctrl+R'; L = 'Restart'; C = 'Cyan' }
+            @{ K = 'Ctrl+B'; L = 'Re-Build'; C = 'Blue' }
+        )
+        for ($i = 0; $i -lt $actions.Count; $i++) {
+            $a = $actions[$i]
+            $x = 2 + ($i * $colWidth)
+            Buf-At-Raw $x ($h - 2) '[' 'Gray' $footerBg
+            Buf-At-Raw ($x + 1) ($h - 2) $a.K $a.C $footerBg
+            Buf-At-Raw ($x + 1 + $a.K.Length) ($h - 2) "] $($a.L)" 'White' $footerBg
+        }
+        Buf-At-Raw $pipeX ($h - 2) '|' 'DarkGray' $footerBg
+        $x = $pipeX + 4
+        Buf-At-Raw $x ($h - 2) '[' 'Gray' $footerBg
+        Buf-At-Raw ($x + 1) ($h - 2) 'Esc' 'Yellow' $footerBg
+        Buf-At-Raw ($x + 4) ($h - 2) "] Return" 'White' $footerBg
+
+        # Row 2: Field Actions & Nav (Fixed Grid)
+        $nav = @(
+            @{ K = 'Enter'; L = 'Edit'; C = 'White' }
+            @{ K = 'G'; L = 'Generate'; C = 'Magenta' }
+        )
+        for ($i = 0; $i -lt $nav.Count; $i++) {
+            $n = $nav[$i]
+            $x = 2 + ($i * $colWidth)
+            Buf-At-Raw $x ($h - 1) '[' 'Gray' $footerBg
+            Buf-At-Raw ($x + 1) ($h - 1) $n.K $n.C $footerBg
+            Buf-At-Raw ($x + 1 + $n.K.Length) ($h - 1) "] $($n.L)" 'White' $footerBg
+        }
+        Buf-At-Raw $pipeX ($h - 1) '|' 'DarkGray' $footerBg
+        $x = $pipeX + 4
+        Buf-At-Raw $x ($h - 1) '[' 'Gray' $footerBg
+        Buf-At-Raw ($x + 1) ($h - 1) "$([char]0x2191)$([char]0x2193)" 'Gray' $footerBg
+        Buf-At-Raw ($x + 3) ($h - 1) "] Nav" 'White' $footerBg
     }
-    Buf-FullLine ($h - 2) $bar1 'White' 'DarkGray'
-    Buf-FullLine ($h - 1) $bar2 'White' 'DarkGray'
 }
 
 function Save-EnvFile {
@@ -1022,7 +1374,6 @@ function Handle-EnvInput {
     if ($Key.Key -eq 'R' -and ($Key.Modifiers -band [ConsoleModifiers]::Control)) {
         Save-EnvFile
         $script:CurrentView = 'dashboard'
-        [Console]::Clear()
         Invoke-DockerAction 'restart'
         return
     }
@@ -1031,27 +1382,41 @@ function Handle-EnvInput {
     if ($Key.Key -eq 'B' -and ($Key.Modifiers -band [ConsoleModifiers]::Control)) {
         Save-EnvFile
         $script:CurrentView = 'dashboard'
-        [Console]::Clear()
         Invoke-DockerAction 'build'
         return
     }
 
     switch ($Key.Key) {
         'Escape' {
-            if ($script:EnvDirty) {
-                Show-Confirm 'Discard unsaved changes?' {
-                    $script:CurrentView = 'dashboard'
-                    $script:LastRefresh = [datetime]::MinValue
-                    $script:ScreenDirty = $true
-                    [Console]::Clear()
+            Show-PopupMenu -Title 'Environment Editor' -Options @(
+                [PSCustomObject]@{
+                    Label       = 'Save & Exit'
+                    Description = 'Save changes to .env and return to the dashboard'
+                    Action      = {
+                        Save-EnvFile
+                        $script:CurrentView = 'dashboard'
+                        $script:LastRefresh = [datetime]::MinValue
+                        $script:ScreenDirty = $true
+                    }
+                },
+                [PSCustomObject]@{
+                    Label       = 'Discard & Exit'
+                    Description = 'Discard unsaved changes and return to the dashboard'
+                    Action      = {
+                        $script:CurrentView = 'dashboard'
+                        $script:LastRefresh = [datetime]::MinValue
+                        $script:ScreenDirty = $true
+                    }
+                },
+                [PSCustomObject]@{
+                    Label       = 'Cancel'
+                    Description = 'Return to the environment editor'
+                    Action      = {
+                        $script:CurrentView = 'env'
+                        $script:ScreenDirty = $true
+                    }
                 }
-            }
-            else {
-                $script:CurrentView = 'dashboard'
-                $script:LastRefresh = [datetime]::MinValue
-                $script:ScreenDirty = $true
-                [Console]::Clear()
-            }
+            ) -PreviousView 'env'
             return
         }
         'UpArrow' {
@@ -1098,144 +1463,326 @@ function Handle-EnvInput {
 }
 
 # ---------------------------------------------------------------------------
-# Confirmation dialog
+# Popup menu (horizontal frame-buffer rendering)
+# ---------------------------------------------------------------------------
+
+function Show-PopupMenu {
+    param(
+        [string]$Title,
+        [array]$Options,
+        [string]$PreviousView = 'dashboard'
+    )
+    $script:PopupTitle = $Title
+    $script:PopupOptions = $Options
+    $script:PopupSelectedIndex = 0
+    $script:PopupPreviousView = $PreviousView
+    $script:CurrentView = 'popup-menu'
+    $script:ScreenDirty = $true
+}
+
+function Get-PopupOptionColor {
+    param([string]$Label, [bool]$IsSelected)
+    if ($IsSelected) { return @{ Fg = 'White'; Bg = 'DarkCyan' } }
+    $lower = $Label.ToLower()
+    if ($lower -match 'start|logs|save') { return @{ Fg = 'Green'; Bg = '' } }
+    if ($lower -match 'stop|destroy|discard|remove|delete') { return @{ Fg = 'Red'; Bg = '' } }
+    if ($lower -match 'build|restart|generate|rebuild') { return @{ Fg = 'Yellow'; Bg = '' } }
+    if ($lower -match 'cancel|back') { return @{ Fg = 'DarkGray'; Bg = '' } }
+    return @{ Fg = 'Cyan'; Bg = '' }
+}
+
+function Build-PopupRowLayout {
+    # Returns an array of arrays; each inner array is the option indices for that row
+    $w = $script:FW
+    $boxW = [Math]::Max(50, [Math]::Min(90, $w - 4))
+    $innerW = $boxW - 4   # 2 border chars + 2 padding
+
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $currentRow = [System.Collections.Generic.List[int]]::new()
+    $currentWidth = 0
+
+    for ($i = 0; $i -lt $script:PopupOptions.Count; $i++) {
+        $label = $script:PopupOptions[$i].Label
+        $btnW = $label.Length + 4   # "[ " + label + " ]"
+        $gapW = if ($currentRow.Count -gt 0) { 2 } else { 0 }
+
+        if ($currentRow.Count -gt 0 -and ($currentWidth + $gapW + $btnW) -gt $innerW) {
+            $rows.Add($currentRow.ToArray())
+            $currentRow = [System.Collections.Generic.List[int]]::new()
+            $currentWidth = 0
+            $gapW = 0
+        }
+        $currentRow.Add($i)
+        $currentWidth += $gapW + $btnW
+    }
+    if ($currentRow.Count -gt 0) { $rows.Add($currentRow.ToArray()) }
+    return $rows.ToArray()
+}
+
+function Draw-PopupMenu {
+    $w = $script:FW
+    $h = $script:FH
+
+    $rows = Build-PopupRowLayout
+    $script:PopupRowLayout = $rows
+
+    $boxW = [Math]::Max(50, [Math]::Min(90, $w - 4))
+    $boxW = [Math]::Max($boxW, $script:PopupTitle.Length + 6)
+
+    # Box height: 1 title + 1 separator + 1 blank + rows.Count option rows + 1 blank + 1 description + 1 blank + 2 border = rows.Count + 7
+    $numOptionRows = $rows.Count
+    $boxH = $numOptionRows + 7
+    $boxX = [int](($w - $boxW) / 2)
+    $boxY = [int](($h - $boxH) / 2)
+
+    $hline = ([char]0x2500).ToString() * ($boxW - 2)
+    $vbar = [char]0x2502
+
+    # Top border
+    $topBorder = "$([char]0x250C)$hline$([char]0x2510)"
+    Buf-At $boxX $boxY $topBorder 'Cyan'
+
+    # Title row
+    $titlePad = [Math]::Max(0, [int](($boxW - 2 - $script:PopupTitle.Length) / 2))
+    $titleInner = (' ' * $titlePad) + $script:PopupTitle + (' ' * ($boxW - 2 - $titlePad - $script:PopupTitle.Length))
+    Buf-At $boxX ($boxY + 1) "$vbar$titleInner$vbar" 'White' 'DarkBlue'
+
+    # Separator
+    $sep = "$([char]0x251C)$hline$([char]0x2524)"
+    Buf-At $boxX ($boxY + 2) $sep 'Cyan'
+
+    # Blank row before options
+    $blank = "$vbar$(' ' * ($boxW - 2))$vbar"
+    Buf-At $boxX ($boxY + 3) $blank 'Cyan'
+
+    # Option rows
+    for ($ri = 0; $ri -lt $rows.Count; $ri++) {
+        $rowIndices = $rows[$ri]
+        # Build the inner content for this row
+        $rowContent = ''
+        foreach ($optIdx in $rowIndices) {
+            $label = $script:PopupOptions[$optIdx].Label
+            $btn = "[ $label ]"
+            if ($rowContent.Length -gt 0) { $rowContent += '  ' }
+            $rowContent += $btn
+        }
+        # Center the row content
+        $pad = [Math]::Max(0, [int](($boxW - 2 - $rowContent.Length) / 2))
+        $line = (' ' * $pad) + $rowContent + (' ' * ($boxW - 2 - $pad - $rowContent.Length))
+
+        $rowY = $boxY + 3 + 1 + $ri   # +1 for the blank row above
+
+        # Draw the full line as background first
+        Buf-At $boxX $rowY "$vbar$line$vbar" 'DarkGray' 'Black'
+
+        # Now overdraw individual buttons with correct colors
+        # Recalculate button X positions within the line
+        $curX = $boxX + 1 + $pad
+        foreach ($optIdx in $rowIndices) {
+            $label = $script:PopupOptions[$optIdx].Label
+            $btn = "[ $label ]"
+            $isSelected = ($optIdx -eq $script:PopupSelectedIndex)
+            $col = Get-PopupOptionColor -Label $label -IsSelected $isSelected
+            $fgCode = $script:AnsiFg[$col.Fg]
+            $bgCode = if ($col.Bg) { $script:AnsiBg[$col.Bg] } else { $script:AnsiBg['Black'] }
+            [void]$script:FrameBuffer.Append("`e[$($rowY + 1);$($curX + 1)H$fgCode$bgCode$btn`e[0m")
+            $curX += $btn.Length + 2   # +2 for the '  ' gap
+        }
+    }
+
+    # Blank row after options
+    $afterOptionsY = $boxY + 3 + 1 + $rows.Count
+    Buf-At $boxX $afterOptionsY $blank 'Cyan'
+
+    # Description row
+    $descY = $afterOptionsY + 1
+    $selectedOpt = $script:PopupOptions[$script:PopupSelectedIndex]
+    $desc = if ($selectedOpt.PSObject.Properties['Description'] -and $selectedOpt.Description) { $selectedOpt.Description } else { '' }
+    $descInner = if ($desc.Length -gt $boxW - 4) { $desc.Substring(0, $boxW - 4) } else { $desc }
+    $descPad = [Math]::Max(0, [int](($boxW - 2 - $descInner.Length) / 2))
+    $descLine = (' ' * $descPad) + $descInner + (' ' * ($boxW - 2 - $descPad - $descInner.Length))
+    Buf-At $boxX $descY "$vbar$descLine$vbar" 'Cyan'
+
+    # Bottom blank row
+    Buf-At $boxX ($descY + 1) $blank 'Cyan'
+
+    # Bottom border
+    $bottomBorder = "$([char]0x2514)$hline$([char]0x2518)"
+    Buf-At $boxX ($descY + 2) $bottomBorder 'Cyan'
+}
+
+function Handle-PopupMenuInput {
+    param([System.ConsoleKeyInfo]$Key)
+
+    $optCount = $script:PopupOptions.Count
+    if ($optCount -eq 0) { return }
+
+    switch ($Key.Key) {
+        'Escape' {
+            $script:CurrentView = $script:PopupPreviousView
+            $script:LastRefresh = [datetime]::MinValue
+            $script:ScreenDirty = $true
+        }
+        { $_ -in @('LeftArrow', 'UpArrow') } {
+            if ($script:PopupSelectedIndex -gt 0) { $script:PopupSelectedIndex-- }
+            else { $script:PopupSelectedIndex = $optCount - 1 }
+        }
+        { $_ -in @('RightArrow', 'DownArrow') } {
+            if ($script:PopupSelectedIndex -lt $optCount - 1) { $script:PopupSelectedIndex++ }
+            else { $script:PopupSelectedIndex = 0 }
+        }
+        'Enter' {
+            $action = $script:PopupOptions[$script:PopupSelectedIndex].Action
+            if ($action) { & $action }
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Wrappers for legacy dialogs
 # ---------------------------------------------------------------------------
 
 function Show-Confirm {
     param([string]$Message, [scriptblock]$OnConfirm)
-    $script:ConfirmMessage = $Message
     $script:ConfirmAction = $OnConfirm
-    $script:CurrentView = 'confirm'
-    Draw-Confirm
-}
-
-function Draw-Confirm {
-    $w = Get-ScreenWidth
-    $h = Get-ScreenHeight
-    $boxW = [Math]::Min(60, $w - 8)
-    $boxH = 5
-    $boxX = [int](($w - $boxW) / 2)
-    $boxY = [int](($h - $boxH) / 2)
-
-    # Draw box
-    $topBorder = $([char]0x250C) + (([char]0x2500).ToString() * ($boxW - 2)) + $([char]0x2510)
-    $bottomBorder = $([char]0x2514) + (([char]0x2500).ToString() * ($boxW - 2)) + $([char]0x2518)
-    $emptyLine = $([char]0x2502) + (' ' * ($boxW - 2)) + $([char]0x2502)
-
-    Write-At $boxX $boxY $topBorder 'Cyan'
-    Write-At $boxX ($boxY + 1) $emptyLine 'Cyan'
-
-    # Center message in box
-    $msgPad = [Math]::Max(0, [int](($boxW - 2 - $script:ConfirmMessage.Length) / 2))
-    $msgLine = $([char]0x2502) + (' ' * $msgPad) + $script:ConfirmMessage + (' ' * ($boxW - 2 - $msgPad - $script:ConfirmMessage.Length)) + $([char]0x2502)
-    Write-At $boxX ($boxY + 2) $msgLine 'White'
-
-    $promptText = '[Y] Yes  [N] No'
-    $promptPad = [Math]::Max(0, [int](($boxW - 2 - $promptText.Length) / 2))
-    $promptLine = $([char]0x2502) + (' ' * $promptPad) + $promptText + (' ' * ($boxW - 2 - $promptPad - $promptText.Length)) + $([char]0x2502)
-    Write-At $boxX ($boxY + 3) $promptLine 'White'
-
-    Write-At $boxX ($boxY + 4) $bottomBorder 'Cyan'
-}
-
-function Handle-ConfirmInput {
-    param([System.ConsoleKeyInfo]$Key)
-    switch ($Key.Key) {
-        'Y' {
-            $action = $script:ConfirmAction
-            $script:CurrentView = 'dashboard'
-            $script:LastRefresh = [datetime]::MinValue
-            $script:ScreenDirty = $true
-            [Console]::Clear()
-            if ($action) { & $action }
+    Show-PopupMenu -Title $Message -Options @(
+        [PSCustomObject]@{
+            Label       = 'Yes'
+            Description = 'Confirm and proceed'
+            Action      = {
+                $script:CurrentView = 'dashboard'
+                $script:LastRefresh = [datetime]::MinValue
+                $script:ScreenDirty = $true
+                if ($script:ConfirmAction) { & $script:ConfirmAction }
+            }
+        },
+        [PSCustomObject]@{
+            Label       = 'No'
+            Description = 'Cancel and return to the dashboard'
+            Action      = {
+                $script:CurrentView = 'dashboard'
+                $script:LastRefresh = [datetime]::MinValue
+                $script:ScreenDirty = $true
+            }
         }
-        { $_ -eq 'N' -or $_ -eq 'Escape' } {
-            $script:CurrentView = 'dashboard'
-            $script:LastRefresh = [datetime]::MinValue
-            $script:ScreenDirty = $true
-            [Console]::Clear()
-        }
-    }
+    ) -PreviousView $script:CurrentView
 }
-
-# ---------------------------------------------------------------------------
-# Destroy Confirmation dialog
-# ---------------------------------------------------------------------------
 
 function Show-DestroyConfirm {
-    $script:CurrentView = 'confirm-destroy'
-    Draw-DestroyConfirm
+    Show-PopupMenu -Title 'Stop & Destroy Containers' -Options @(
+        [PSCustomObject]@{
+            Label       = 'Containers Only'
+            Description = 'Remove containers and networks, keep volumes and images'
+            Action      = {
+                $script:CurrentView = 'dashboard'
+                $script:LastRefresh = [datetime]::MinValue
+                $script:ScreenDirty = $true
+                Invoke-DockerAction -Action 'destroy'
+            }
+        },
+        [PSCustomObject]@{
+            Label       = '+Volumes'
+            Description = 'Also remove named volumes and Supabase bind-mount data'
+            Action      = {
+                $script:CurrentView = 'dashboard'
+                $script:LastRefresh = [datetime]::MinValue
+                $script:ScreenDirty = $true
+                Invoke-DockerAction -Action 'destroy' -WithVolumes
+            }
+        },
+        [PSCustomObject]@{
+            Label       = '+Builds'
+            Description = 'Also remove built Docker images (forces full rebuild next time)'
+            Action      = {
+                $script:CurrentView = 'dashboard'
+                $script:LastRefresh = [datetime]::MinValue
+                $script:ScreenDirty = $true
+                Invoke-DockerAction -Action 'destroy' -WithBuilds
+            }
+        },
+        [PSCustomObject]@{
+            Label       = 'All'
+            Description = 'Remove containers, volumes, Supabase data, and built images'
+            Action      = {
+                $script:CurrentView = 'dashboard'
+                $script:LastRefresh = [datetime]::MinValue
+                $script:ScreenDirty = $true
+                Invoke-DockerAction -Action 'destroy' -WithVolumes -WithBuilds
+            }
+        },
+        [PSCustomObject]@{
+            Label       = 'Cancel'
+            Description = 'Return to the dashboard without destroying anything'
+            Action      = {
+                $script:CurrentView = 'dashboard'
+                $script:LastRefresh = [datetime]::MinValue
+                $script:ScreenDirty = $true
+            }
+        }
+    ) -PreviousView 'dashboard'
 }
 
-function Draw-DestroyConfirm {
-    $w = Get-ScreenWidth
-    $h = Get-ScreenHeight
-    $boxW = [Math]::Min(75, $w - 2)
-    $boxH = 7
-    $boxX = [int](($w - $boxW) / 2)
-    $boxY = [int](($h - $boxH) / 2)
+function Show-ContainerMenu {
+    $c = $script:Containers[$script:SelectedIndex]
+    $script:MenuContextName = if ($c.Name) { $c.Name } else { $c.Service }
+    $script:MenuContextSvc = if ($c.Service) { $c.Service } else { $script:MenuContextName }
+    $state = if ($c.State) { $c.State } else { 'unknown' }
 
-    # Draw box
-    $topBorder = $([char]0x250C) + (([char]0x2500).ToString() * ($boxW - 2)) + $([char]0x2510)
-    $bottomBorder = $([char]0x2514) + (([char]0x2500).ToString() * ($boxW - 2)) + $([char]0x2518)
-    $emptyLine = $([char]0x2502) + (' ' * ($boxW - 2)) + $([char]0x2502)
-
-    Write-At $boxX $boxY $topBorder 'Red'
-    for ($i = 1; $i -lt ($boxH - 1); $i++) {
-        Write-At $boxX ($boxY + $i) $emptyLine 'Red'
+    $options = @()
+    $options += [PSCustomObject]@{
+        Label       = 'Logs'
+        Description = "Stream live logs from $($script:MenuContextName)"
+        Action      = { Start-LogViewer $script:MenuContextName }
     }
 
-    $msg1 = "Stop & destroy containers?"
-    $msgPad1 = [Math]::Max(0, [int](($boxW - 2 - $msg1.Length) / 2))
-    $msgLine1 = $([char]0x2502) + (' ' * $msgPad1) + $msg1 + (' ' * ($boxW - 2 - $msgPad1 - $msg1.Length)) + $([char]0x2502)
-    Write-At $boxX ($boxY + 2) $msgLine1 'White'
-
-    $promptText1 = '[Y] Containers Only  [V] +Volumes  [B] +Builds  [A] All  [N] Cancel'
-    $promptPad1 = [Math]::Max(0, [int](($boxW - 2 - $promptText1.Length) / 2))
-    $promptLine1 = $([char]0x2502) + (' ' * $promptPad1) + $promptText1 + (' ' * ($boxW - 2 - $promptPad1 - $promptText1.Length)) + $([char]0x2502)
-    Write-At $boxX ($boxY + 4) $promptLine1 'Yellow'
-
-    Write-At $boxX ($boxY + ($boxH - 1)) $bottomBorder 'Red'
-}
-
-function Handle-DestroyConfirmInput {
-    param([System.ConsoleKeyInfo]$Key)
-    switch ($Key.Key) {
-        'Y' {
-            $script:CurrentView = 'dashboard'
-            $script:LastRefresh = [datetime]::MinValue
-            $script:ScreenDirty = $true
-            [Console]::Clear()
-            Invoke-DockerAction -Action 'destroy'
+    if ($state -eq 'running') {
+        $options += [PSCustomObject]@{
+            Label       = 'Stop'
+            Description = "Stop the $($script:MenuContextSvc) service"
+            Action      = {
+                $script:CurrentView = 'dashboard'
+                Invoke-DockerAction -Action 'stop' -ServiceName $script:MenuContextSvc
+            }
         }
-        'V' {
-            $script:CurrentView = 'dashboard'
-            $script:LastRefresh = [datetime]::MinValue
-            $script:ScreenDirty = $true
-            [Console]::Clear()
-            Invoke-DockerAction -Action 'destroy' -WithVolumes
-        }
-        'B' {
-            $script:CurrentView = 'dashboard'
-            $script:LastRefresh = [datetime]::MinValue
-            $script:ScreenDirty = $true
-            [Console]::Clear()
-            Invoke-DockerAction -Action 'destroy' -WithBuilds
-        }
-        'A' {
-            $script:CurrentView = 'dashboard'
-            $script:LastRefresh = [datetime]::MinValue
-            $script:ScreenDirty = $true
-            [Console]::Clear()
-            Invoke-DockerAction -Action 'destroy' -WithVolumes -WithBuilds
-        }
-        { $_ -in @('N', 'Escape') } {
-            $script:CurrentView = 'dashboard'
-            $script:LastRefresh = [datetime]::MinValue
-            $script:ScreenDirty = $true
-            [Console]::Clear()
+        $options += [PSCustomObject]@{
+            Label       = 'Restart'
+            Description = "Restart the $($script:MenuContextSvc) service"
+            Action      = {
+                $script:CurrentView = 'dashboard'
+                Invoke-DockerAction -Action 'restart' -ServiceName $script:MenuContextSvc
+            }
         }
     }
+    else {
+        $options += [PSCustomObject]@{
+            Label       = 'Start'
+            Description = "Start the $($script:MenuContextSvc) service"
+            Action      = {
+                $script:CurrentView = 'dashboard'
+                Invoke-DockerAction -Action 'start' -ServiceName $script:MenuContextSvc
+            }
+        }
+    }
+
+    $options += [PSCustomObject]@{
+        Label       = 'Build'
+        Description = "Rebuild and restart the $($script:MenuContextSvc) service"
+        Action      = {
+            $script:CurrentView = 'dashboard'
+            Invoke-DockerAction -Action 'build' -ServiceName $script:MenuContextSvc
+        }
+    }
+    $options += [PSCustomObject]@{
+        Label       = 'Cancel'
+        Description = 'Return to the dashboard'
+        Action      = {
+            $script:CurrentView = 'dashboard'
+            $script:LastRefresh = [datetime]::MinValue
+            $script:ScreenDirty = $true
+        }
+    }
+
+    Show-PopupMenu -Title "$($script:MenuContextName) ($state)" -Options $options -PreviousView 'dashboard'
 }
 
 # ---------------------------------------------------------------------------
@@ -1256,27 +1803,37 @@ function Handle-DashboardInput {
         }
         'Enter' {
             if ($script:Containers.Count -gt 0 -and $script:SelectedIndex -lt $script:Containers.Count) {
-                $name = $script:Containers[$script:SelectedIndex].Name
-                if (-not $name) { $name = $script:Containers[$script:SelectedIndex].Service }
-                if ($name) { Start-LogViewer $name }
+                Show-ContainerMenu
             }
         }
         'S' {
             if (-not ($Key.Modifiers -band [ConsoleModifiers]::Control)) {
-                Invoke-DockerAction 'start'
+                Show-PopupMenu -Title 'Start Containers' -Options @(
+                    [PSCustomObject]@{ Label = 'Start All'; Description = 'Run docker compose up -d for all services'; Action = { Invoke-DockerAction 'start' } },
+                    [PSCustomObject]@{ Label = 'Cancel'; Description = 'Return to the dashboard without changes'; Action = { $script:CurrentView = 'dashboard'; $script:ScreenDirty = $true } }
+                ) -PreviousView 'dashboard'
             }
         }
         'X' {
-            Invoke-DockerAction 'stop'
+            Show-PopupMenu -Title 'Stop Containers' -Options @(
+                [PSCustomObject]@{ Label = 'Stop All'; Description = 'Run docker compose stop for all services'; Action = { Invoke-DockerAction 'stop' } },
+                [PSCustomObject]@{ Label = 'Cancel'; Description = 'Return to the dashboard without changes'; Action = { $script:CurrentView = 'dashboard'; $script:ScreenDirty = $true } }
+            ) -PreviousView 'dashboard'
         }
         'R' {
             if (-not ($Key.Modifiers -band [ConsoleModifiers]::Control)) {
-                Invoke-DockerAction 'restart'
+                Show-PopupMenu -Title 'Restart Containers' -Options @(
+                    [PSCustomObject]@{ Label = 'Restart All'; Description = 'Run docker compose restart for all services'; Action = { Invoke-DockerAction 'restart' } },
+                    [PSCustomObject]@{ Label = 'Cancel'; Description = 'Return to the dashboard without changes'; Action = { $script:CurrentView = 'dashboard'; $script:ScreenDirty = $true } }
+                ) -PreviousView 'dashboard'
             }
         }
         'B' {
             if (-not ($Key.Modifiers -band [ConsoleModifiers]::Control)) {
-                Invoke-DockerAction 'build'
+                Show-PopupMenu -Title 'Re-Build Containers' -Options @(
+                    [PSCustomObject]@{ Label = 'Build & Start'; Description = 'Run docker compose up -d --build for all services'; Action = { Invoke-DockerAction 'build' } },
+                    [PSCustomObject]@{ Label = 'Cancel'; Description = 'Return to the dashboard without changes'; Action = { $script:CurrentView = 'dashboard'; $script:ScreenDirty = $true } }
+                ) -PreviousView 'dashboard'
             }
         }
         'D' {
@@ -1325,7 +1882,7 @@ function Invoke-Startup {
 
     $allRunning = Test-AllContainersRunning
 
-    if (-not $allRunning) {
+    if (-not $allRunning -and $StartProject) {
         Write-Host ''
         Write-Host '  Not all containers are running.' -ForegroundColor Cyan
         Write-Host '  Starting the stack: docker compose up -d --build' -ForegroundColor Cyan
@@ -1351,6 +1908,10 @@ function Invoke-Startup {
         Write-Host ''
         Write-Host '  Stack started. Loading dashboard...' -ForegroundColor Green
         Start-Sleep -Milliseconds 1000
+    }
+    elseif (-not $allRunning) {
+        Write-Host '  Not all containers are running. Start them from the dashboard.' -ForegroundColor Yellow
+        Start-Sleep -Milliseconds 800
     }
     else {
         Write-Host '  All containers are running. Loading dashboard...' -ForegroundColor Green
@@ -1394,14 +1955,27 @@ function Enter-MainLoop {
             }
         }
 
+        # Action view: drain output and check process state
+        if ($script:CurrentView -eq 'action') {
+            $prevCount = $script:ActionBuffer.Count
+            $wasComplete = $script:ActionComplete
+            Update-ActionBuffer
+            if (-not $script:ActionComplete) {
+                $script:ScreenDirty = $true   # keep spinner animating
+            }
+            elseif ($script:ActionBuffer.Count -ne $prevCount -or $script:ActionComplete -ne $wasComplete) {
+                $script:ScreenDirty = $true
+            }
+        }
+
         # Draw current view ONLY if dirty
         if ($script:ScreenDirty) {
             switch ($script:CurrentView) {
                 'dashboard' { Draw-Dashboard }
                 'logs' { Draw-LogViewer }
                 'env' { Draw-EnvEditor }
-                'confirm' { <# Already drawn on show #> }
-                'confirm-destroy' { <# Already drawn on show #> }
+                'popup-menu' { Draw-PopupMenu }
+                'action' { Draw-ActionView }
             }
             Flush-Frame
             $script:ScreenDirty = $false
@@ -1416,8 +1990,8 @@ function Enter-MainLoop {
                 'dashboard' { Handle-DashboardInput $key }
                 'logs' { Handle-LogInput $key }
                 'env' { Handle-EnvInput $key }
-                'confirm' { Handle-ConfirmInput $key }
-                'confirm-destroy' { Handle-DestroyConfirmInput $key }
+                'popup-menu' { Handle-PopupMenuInput $key }
+                'action' { Handle-ActionInput $key }
             }
         }
 
@@ -1442,16 +2016,24 @@ function Show-CliHelp {
     Write-Host '  AgriSense CLI' -ForegroundColor Cyan
     Write-Host '  Usage: .\agrisense.ps1 [flags]' -ForegroundColor Gray
     Write-Host ''
-    Write-Host '  No flags         Launch the interactive TUI dashboard'
-    Write-Host '  -Start           Start all containers (docker compose up -d)'
-    Write-Host '  -Stop            Stop all containers'
-    Write-Host '  -Restart         Restart all containers'
-    Write-Host '  -Build           Rebuild and start all containers'
-    Write-Host '  -Destroy         Stop and destroy containers'
-    Write-Host '  -RemoveVolumes   Also remove named volumes when destroying'
-    Write-Host '  -RemoveBuilds    Also remove image builds when destroying'
-    Write-Host '  -Status          Show container status and exit'
-    Write-Host '  -Help            Show this help message'
+    Write-Host '  No flags          Launch the interactive TUI dashboard'
+    Write-Host '  -StartProject     Automatically start containers when launching TUI'
+    Write-Host '  -Development      Enable hot-reload dev mode (mounts local source dirs)'
+    Write-Host '  -Start            Start all containers (docker compose up -d)'
+    Write-Host '  -Stop             Stop all containers'
+    Write-Host '  -Restart          Restart all containers'
+    Write-Host '  -Build            Rebuild and start all containers'
+    Write-Host '  -Destroy          Stop and destroy containers'
+    Write-Host '  -RemoveVolumes    Also remove named volumes when destroying'
+    Write-Host '  -RemoveBuilds     Also remove image builds when destroying'
+    Write-Host '  -Status           Show container status and exit'
+    Write-Host '  -Help             Show this help message'
+    Write-Host ''
+    Write-Host '  -Development can be combined with any action flag:'
+    Write-Host '    .\agrisense.ps1 -Development -Start'
+    Write-Host '    .\agrisense.ps1 -Development -Restart'
+    Write-Host '    .\agrisense.ps1 -Development -Build'
+    Write-Host '    .\agrisense.ps1 -Development              (TUI, dev mode)'
     Write-Host ''
 }
 
@@ -1511,7 +2093,7 @@ function Show-CliStatus {
     Write-Host ''
 }
 
-# Check if any CLI flag was passed
+# Check if any CLI action flag was passed (-Development alone opens the TUI in dev mode)
 $cliMode = $Help -or $Start -or $Stop -or $Restart -or $Build -or $Destroy -or $Status
 
 if ($cliMode) {
@@ -1550,6 +2132,11 @@ finally {
     # Cleanup log process and events if running
     if ($script:LogProcess) {
         try { Stop-LogViewer } catch {}
+    }
+
+    # Cleanup action process and events if running
+    if ($script:ActionProcess) {
+        try { Stop-ActionView } catch {}
     }
 
     [Console]::Clear()

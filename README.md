@@ -143,6 +143,62 @@ If you change the backend port, you must rebuild the frontend image (`-Build`).
 
 ---
 
+## 🛠️ Development Mode (Hot Reload)
+
+Development mode mounts your local `agrisense-backend` and `agrisense-frontend`
+source directories into the running containers so that code changes take effect
+immediately — no image rebuild required.
+
+| Service  | Reload mechanism                                           |
+| -------- | ---------------------------------------------------------- |
+| Backend  | NestJS watch mode (`npm run start:dev`) via `@nestjs/cli`  |
+| Frontend | Next.js dev server (`npm run dev`) with Fast Refresh       |
+
+Supabase services are unaffected.
+
+### Starting in development mode
+
+**Via `agrisense.ps1` (recommended):**
+
+```powershell
+# Interactive TUI with hot reload
+./agrisense.ps1 -Development
+
+# Auto-start the stack in dev mode, then open the TUI
+./agrisense.ps1 -Development -StartProject
+
+# Non-interactive CLI actions in dev mode
+./agrisense.ps1 -Development -Start
+./agrisense.ps1 -Development -Restart
+./agrisense.ps1 -Development -Build
+```
+
+**Via Docker Compose directly:**
+
+```powershell
+# Start in development mode
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+# Start in production mode (default)
+docker compose up -d
+```
+
+### Production mode (default)
+
+```powershell
+# Interactive TUI — production images, no volume mounts
+./agrisense.ps1
+
+# Or directly
+docker compose up -d
+```
+
+> **Note:** `NEXT_PUBLIC_API_URL` is baked into the frontend image at build time
+> in production mode. In development mode the Next.js dev server reads it from
+> the environment at runtime, so no rebuild is needed when this value changes.
+
+---
+
 ## 💡 Troubleshooting
 
 **`.env` not found**

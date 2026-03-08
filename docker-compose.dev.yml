@@ -1,0 +1,51 @@
+# Agrisense — development override compose file
+#
+# Overrides the base docker-compose.yml to enable hot reload for the backend
+# and frontend services. Mount local source directories as live volumes so code
+# changes reflect immediately without rebuilding the image.
+#
+# Usage (direct):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Usage (via agrisense.ps1):
+#   .\agrisense.ps1 -Development
+#   .\agrisense.ps1 -Development -Start
+#
+# The .env file remains the sole source of truth.
+# Supabase services are unaffected — only backend and frontend change.
+
+services:
+  backend:
+    # Stop at the builder stage which has all dev dependencies installed
+    # (including @nestjs/cli, ts-node, and TypeScript compiler).
+    build:
+      target: builder
+    # Use NestJS watch mode for hot reload via ts-node-esm/webpack-hmr.
+    command:
+      - sh
+      - -c
+      - |
+        if [ -n "$$DIRECT_URL" ]; then npx prisma migrate deploy; fi
+        npm run start:dev
+    # Mount local source so file-system changes are visible inside the container.
+    volumes:
+      - ../agrisense-backend/src:/app/src
+      - ../agrisense-backend/prisma:/app/prisma
+    environment:
+      NODE_ENV: development
+
+  frontend:
+    # Stop at the builder stage which has all dev dependencies installed.
+    build:
+      target: builder
+    # Use Next.js dev server for hot reload / Fast Refresh.
+    command: ["npm", "run", "dev"]
+    # Mount local source so edits appear immediately without rebuilding.
+    volumes:
+      - ../agrisense-frontend/src:/app/src
+      - ../agrisense-frontend/public:/app/public
+    environment:
+      NODE_ENV: development
+      # Next.js dev server must bind to 0.0.0.0 to be reachable outside the container.
+      HOSTNAME: "0.0.0.0"
+      PORT: "3000"

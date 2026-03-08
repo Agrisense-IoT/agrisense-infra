@@ -2,6 +2,13 @@
 
 All notable changes to the Agrisense single-repo orchestrator and TUI will be documented in this file.
 
+## [1.1.1] - 2026-03-08
+
+### ⚙️ Sync & Build
+
+- Synchronized versions across frontend, backend, and infra to 1.1.1.
+- Updated documentation and orchestrated deployment scripts.
+
 ## [1.1.0] - 2026-03-08
 
 ### 🚀 Performance & Optimizations
