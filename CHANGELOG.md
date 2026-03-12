@@ -2,6 +2,12 @@
 
 All notable changes to the Agrisense single-repo orchestrator and TUI will be documented in this file.
 
+## [1.3.1] - 2026-03-12
+
+### ✨ Features
+
+- **Exclusion Support:** Added `.exclude-on-pull` support using Git sparse-checkout to exclude specific files and folders during repository synchronization.
+
 ## [1.3.0] - 2026-03-12
 
 ### ✨ Features
