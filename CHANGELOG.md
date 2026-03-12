@@ -2,6 +2,12 @@
 
 All notable changes to the Agrisense single-repo orchestrator and TUI will be documented in this file.
 
+## [1.3.0] - 2026-03-12
+
+### ✨ Features
+
+- **Repository Synchronization:** Added automatic repository detection and cloning logic with GitHub authentication (Device Code Flow).
+
 ## [1.2.0] - 2026-03-12
 
 ### 🏗️ TUI Infrastructure

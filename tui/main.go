@@ -13,6 +13,7 @@ import (
 
 	"agrisense/internal/config"
 	"agrisense/internal/runner"
+	"agrisense/internal/sync"
 	"agrisense/internal/tui"
 )
 
@@ -26,8 +27,13 @@ func main() {
 		}
 	}()
 
-	// 1. Detect scriptDir
-	scriptDir := detectScriptDir()
+	// 1. Ensure we are in the repository root
+	scriptDir, err := sync.EnsureRepoRoot()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
 	envPath := filepath.Join(scriptDir, ".env")
 
 	// 2. Parse --profile flag
@@ -50,28 +56,6 @@ func main() {
 	}
 }
 
-// detectScriptDir walks up from the executable path until docker-compose.yml is found.
-// Falls back to the current directory.
-func detectScriptDir() string {
-	exe, err := os.Executable()
-	if err != nil {
-		abs, _ := filepath.Abs(".")
-		return abs
-	}
-	dir := filepath.Dir(exe)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "docker-compose.yml")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	abs, _ := filepath.Abs(".")
-	return abs
-}
 
 func runCLI(scriptDir, envPath, profile string, args []string) {
 	envValues, _ := config.ReadEnvValues(envPath)
