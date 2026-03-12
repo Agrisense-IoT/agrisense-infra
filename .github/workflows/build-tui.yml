@@ -8,7 +8,10 @@ on:
 jobs:
   build:
     name: Build TUI
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,26 +26,37 @@ jobs:
         working-directory: tui
         run: make build-all
 
-      - name: Upload Silicon Mac Binary
+      - name: Upload Mac Universal Binary
         uses: actions/upload-artifact@v4
         with:
-          name: Agrisense (Silicon Mac)
-          path: "tui/dist/Agrisense (Silicon Mac)"
-
-      - name: Upload Intel Mac Binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: Agrisense (Intel Mac)
-          path: "tui/dist/Agrisense (Intel Mac)"
+          name: agrisense-mac
+          path: "tui/dist/agrisense-mac"
 
       - name: Upload Linux Binary
         uses: actions/upload-artifact@v4
         with:
-          name: Agrisense (Linux x64)
-          path: "tui/dist/Agrisense (Linux x64)"
+          name: agrisense-linux
+          path: "tui/dist/agrisense-linux"
 
       - name: Upload Windows Binary
         uses: actions/upload-artifact@v4
         with:
-          name: Agrisense (Windows).exe
-          path: "tui/dist/Agrisense (Windows).exe"
+          name: agrisense-windows
+          path: "tui/dist/agrisense-windows.exe"
+
+      - name: Create/Update Latest Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+          gh release delete latest --yes || true
+          git tag -d latest || true
+          git tag latest
+          git push origin latest --force
+          gh release create latest \
+            --title "Latest Binaries" \
+            --notes "Experimental builds of Agrisense TUI (including Mac Universal binary)." \
+            "tui/dist/agrisense-mac" \
+            "tui/dist/agrisense-linux" \
+            "tui/dist/agrisense-windows.exe"

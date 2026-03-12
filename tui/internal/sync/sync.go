@@ -35,7 +35,7 @@ func EnsureRepoRoot() (string, error) {
 	// 2. Not in repo root. Ask to clone.
 	fmt.Printf("Agrisense infrastructure files not detected.\n")
 	fmt.Printf("The executable should be run from the root of the agrisense-infra repository.\n")
-	fmt.Printf("Would you like to clone the repository from GitHub? [Y/n]: ")
+	fmt.Printf("Would you like to clone the repository from GitHub into the current directory? [Y/n]: ")
 
 	var response string
 	fmt.Scanln(&response)
@@ -43,7 +43,7 @@ func EnsureRepoRoot() (string, error) {
 		return "", fmt.Errorf("repository sync cancelled by user")
 	}
 
-	fmt.Printf("\nCloning repository from %s...\n", RepoURL)
+	fmt.Printf("\nInitializing and fetching repository from %s...\n", RepoURL)
 	fmt.Println("Note: If prompted, please log in via your browser to access the private repository.")
 
 	// Check if git is available
@@ -51,21 +51,26 @@ func EnsureRepoRoot() (string, error) {
 		return "", fmt.Errorf("git command not found. Please install Git: https://git-scm.com/")
 	}
 
-	// Clone into a subdirectory
-	repoDir := filepath.Join(exeDir, "agrisense-infra")
-	
-	// If the directory already exists (maybe an incomplete clone?), we might need to handle it.
-	// For now, let git handle it (it will error if not empty).
-	
-	cmd := exec.Command("git", "clone", RepoURL, repoDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to clone repository: %w", err)
+	// Commands to initialize, fetch and checkout in the current directory
+	commands := [][]string{
+		{"git", "init"},
+		{"git", "remote", "add", "origin", RepoURL},
+		{"git", "fetch", "origin"},
+		{"git", "checkout", "-f", "main"},
 	}
 
-	fmt.Printf("\nRepository cloned successfully to: %s\n", repoDir)
-	return repoDir, nil
+	for _, args := range commands {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = exeDir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("failed to execute %v: %w", args, err)
+		}
+	}
+
+	fmt.Printf("\nRepository files synchronized successfully to: %s\n", exeDir)
+	return exeDir, nil
 }
