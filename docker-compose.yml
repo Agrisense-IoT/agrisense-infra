@@ -18,6 +18,21 @@ include:
     env_file: .env
 
 services:
+  # --- INFRASTRUCTURE ---
+
+  mosquitto:
+    container_name: mosquitto
+    image: eclipse-mosquitto:2.0
+    restart: unless-stopped
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+      - "9001:9001" # WebSockets for testing.html
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    networks:
+      - agrisense_internal
+
+  # --- APPLICATION ---
   backend:
     container_name: agrisense-backend
     build:
@@ -41,6 +56,8 @@ services:
       MQTT_PASSWORD: ${MQTT_PASSWORD}
     # Run migrations automatically on startup using the backend Dockerfile's CMD
     depends_on:
+      mosquitto:
+        condition: service_started
       supavisor:
         condition: service_healthy
     healthcheck:
@@ -78,3 +95,29 @@ services:
     depends_on:
       backend:
         condition: service_started
+
+  # --- TESTING ---
+
+  backend-test:
+    container_name: agrisense-backend-test
+    build:
+      context: ../agrisense-backend
+      dockerfile: Dockerfile
+      target: builder
+    profiles: ["test"]
+    env_file: .env
+    environment:
+      # Use a separate database for tests if necessary, or just run unit/integration tests
+      DATABASE_URL: "postgresql://postgres.${POOLER_TENANT_ID}:${POSTGRES_PASSWORD}@supabase-pooler:6543/${POSTGRES_DB}?pgbouncer=true"
+    volumes:
+      - ../agrisense-backend/src:/app/src
+      - ../agrisense-backend/test:/app/test
+      - ../agrisense-backend/prisma:/app/prisma
+    command: ["npm", "run", "test"]
+    depends_on:
+      supavisor:
+        condition: service_healthy
+
+networks:
+  agrisense_internal:
+    name: ${DOCKER_NETWORK_NAME:-agrisense_internal}

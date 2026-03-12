@@ -20,3 +20,5 @@ db_logs.txt
 !agrisense.ps1
 !config.ps1
 !fix_supabase.ps1
+plan
+AGENTS.md

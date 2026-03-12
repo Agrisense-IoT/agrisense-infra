@@ -2,6 +2,14 @@
 
 All notable changes to the Agrisense single-repo orchestrator and TUI will be documented in this file.
 
+## [1.2.0] - 2026-03-12
+
+### 🏗️ TUI Infrastructure
+
+- **Go Migration:** Fully migrated the infrastructure TUI from PowerShell (`agrisense.ps1`) to a high-performance Go-based binary (`agrisense-tui.exe`) using the Bubble Tea framework.
+- **Improved Monitoring:** Enhanced log tailing and container health management.
+- **Secrets Management:** Integrated robust JWT generation for Supabase synchronization.
+
 ## [1.1.2] - 2026-03-08
 
 ### ⚙️ Sync & Build
