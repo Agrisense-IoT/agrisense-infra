@@ -22,3 +22,6 @@ db_logs.txt
 !fix_supabase.ps1
 plan
 AGENTS.md
+
+# Binaries
+*.exe
