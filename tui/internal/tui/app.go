@@ -105,6 +105,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Delegate to active view so it can resize internal state.
 		return m.delegateToActive(msg)
 
+	case tea.KeyMsg:
+		if msg.Type == tea.KeyCtrlC {
+			return m, tea.Quit
+		}
+
 	case NavigateTo:
 		if msg.View == ViewPopup {
 			m.prevView = m.activeView

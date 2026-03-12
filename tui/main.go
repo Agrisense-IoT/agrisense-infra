@@ -45,7 +45,7 @@ func main() {
 	if len(args) == 0 {
 		// TUI mode
 		m := tui.NewModel(scriptDir, *profile)
-		p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+		p := tea.NewProgram(m, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
