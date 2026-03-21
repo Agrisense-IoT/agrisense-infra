@@ -50,8 +50,8 @@ services:
       DATABASE_URL: "postgresql://postgres.${POOLER_TENANT_ID}:${POSTGRES_PASSWORD}@supabase-pooler:6543/${POSTGRES_DB}?pgbouncer=true"
       DIRECT_URL: "postgresql://supabase_admin:${POSTGRES_PASSWORD}@supabase-db:${POSTGRES_PORT}/${POSTGRES_DB}"
       SEED: ${SEED}
-      MQTT_HOST: ${MQTT_HOST}
-      MQTT_PORT: ${MQTT_PORT}
+      MQTT_HOST: ${MQTT_HOST:-mosquitto}
+      MQTT_PORT: ${MQTT_PORT:-1883}
       MQTT_USERNAME: ${MQTT_USERNAME}
       MQTT_PASSWORD: ${MQTT_PASSWORD}
     # Run migrations automatically on startup using the backend Dockerfile's CMD
