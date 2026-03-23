@@ -54,7 +54,21 @@ func round2(v float64) float64 {
 	return float64(int(v*100+0.5)) / 100
 }
 
+// seededMACs mirrors the SLAVE device MACs pre-populated by the backend seeder.
+// Index wraps around if more devices are requested than seeded entries.
+var seededMACs = []string{
+	"00:00:00:00:00:02",
+	"00:00:00:00:00:03",
+	"00:00:00:00:00:05",
+	"00:00:00:00:00:07",
+	"00:00:00:00:00:08",
+}
+
 func macFromIndex(i int) string {
+	if i < len(seededMACs) {
+		return seededMACs[i]
+	}
+	// fallback for indices beyond seeded range
 	return fmt.Sprintf("AA:BB:CC:DD:%02X:%02X", (i>>8)&0xFF, i&0xFF)
 }
 
@@ -89,7 +103,7 @@ func NewDeviceSimulator(index int, host, port, username, password string, lines 
 // Start connects to the broker and publishes every second until ctx is cancelled.
 func (d *DeviceSimulator) Start(ctx context.Context) {
 	mac := macFromIndex(d.Index)
-	topic := fmt.Sprintf("agrisense/devices/%s/data", mac)
+	topic := fmt.Sprintf("agrisense/devices/%s/readings", mac)
 
 	broker := fmt.Sprintf("tcp://%s:%s", d.Host, d.Port)
 	opts := paho.NewClientOptions().
@@ -199,7 +213,7 @@ func (s *SwarmSimulator) Start(ctx context.Context) {
 
 func (s *SwarmSimulator) runDevice(ctx context.Context, index int) {
 	mac := macFromIndex(index)
-	topic := fmt.Sprintf("agrisense/devices/%s/data", mac)
+	topic := fmt.Sprintf("agrisense/devices/%s/readings", mac)
 
 	broker := fmt.Sprintf("tcp://%s:%s", s.Host, s.Port)
 	opts := paho.NewClientOptions().

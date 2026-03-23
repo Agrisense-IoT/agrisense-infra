@@ -16,6 +16,9 @@ import (
 // SimLineReceived carries a line of output from the MQTT simulator.
 type SimLineReceived struct{ Line string }
 
+// simDoneMsg is sent when the simulator output channel is closed.
+type simDoneMsg struct{}
+
 type simState int
 
 const (
@@ -109,9 +112,14 @@ func (m SimulationModel) Update(msg tea.Msg) (SimulationModel, tea.Cmd) {
 	case SimLineReceived:
 		if m.state == simStateRunning {
 			m.action.AppendLine(msg.Line)
-			return m, m.listenCmd()
 		}
 		return m, m.listenCmd()
+
+	case simDoneMsg:
+		if m.state == simStateRunning {
+			m.action.SetDone(0)
+		}
+		return m, nil
 
 	case ActionGoBackMsg:
 		// stop simulator and return to dashboard
@@ -194,25 +202,13 @@ func (m SimulationModel) startSingle() SimulationModel {
 	lines := make(chan string, 128)
 	ctx, cancel := context.WithCancel(context.Background())
 	dev := mqttsim.NewDeviceSimulator(0, m.mqttHost, m.mqttPort, m.mqttUsername, m.mqttPassword, lines)
-	dev.Start(ctx) // runs in goroutine internally via separate goroutine below
-	// Actually start returns immediately; the goroutine is the blocking part.
-	// We need to run Start in a goroutine.
-	// Re-do: start the goroutine here.
-	_ = dev  // we just created it; need to launch goroutine
-	_ = ctx
-	_ = cancel
+	go dev.Start(ctx)
 
-	// Redo properly:
-	lines2 := make(chan string, 128)
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	dev2 := mqttsim.NewDeviceSimulator(0, m.mqttHost, m.mqttPort, m.mqttUsername, m.mqttPassword, lines2)
-	go dev2.Start(ctx2)
-
-	m.lines = lines2
-	m.ctx = ctx2
-	m.cancel = cancel2
-	m.devSim = dev2
-	m.action = NewActionModel("Simulate Single Device", cancel2, m.Width, m.Height)
+	m.lines = lines
+	m.ctx = ctx
+	m.cancel = cancel
+	m.devSim = dev
+	m.action = NewActionModel("Simulate Single Device", cancel, m.Width, m.Height)
 	return m
 }
 
@@ -247,7 +243,7 @@ func (m SimulationModel) listenCmd() tea.Cmd {
 	return func() tea.Msg {
 		line, ok := <-ch
 		if !ok {
-			return SimLineReceived{Line: ""}
+			return simDoneMsg{}
 		}
 		return SimLineReceived{Line: line}
 	}

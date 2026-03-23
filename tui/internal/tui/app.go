@@ -352,7 +352,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case views.SimulationModeMsg:
 		envValues, _ := config.ReadEnvValues(m.envPath)
-		host := envValues["MQTT_HOST"]
+		host := envValues["LOCAL_MQTT_HOST"]
+		if host == "" {
+			host = envValues["MQTT_HOST"]
+		}
 		if host == "" {
 			host = "localhost"
 		}

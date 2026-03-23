@@ -55,6 +55,9 @@ services:
       MQTT_USERNAME: ${MQTT_USERNAME}
       MQTT_PASSWORD: ${MQTT_PASSWORD}
     # Run migrations automatically on startup using the backend Dockerfile's CMD
+    networks:
+      - agrisense_internal
+      - default
     depends_on:
       mosquitto:
         condition: service_started
