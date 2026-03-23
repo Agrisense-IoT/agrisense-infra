@@ -25,7 +25,7 @@ services:
     image: eclipse-mosquitto:2.0
     restart: unless-stopped
     ports:
-      - "${MQTT_PORT:-1883}:1883"
+      - "1883:1883"
       - "9001:9001" # WebSockets for testing.html
     volumes:
       - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
@@ -52,6 +52,7 @@ services:
       SEED: ${SEED}
       MQTT_HOST: ${MQTT_HOST:-mosquitto}
       MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_PROTOCOL: ${MQTT_PROTOCOL:-mqtt}
       MQTT_USERNAME: ${MQTT_USERNAME}
       MQTT_PASSWORD: ${MQTT_PASSWORD}
     # Run migrations automatically on startup using the backend Dockerfile's CMD
